@@ -1,76 +1,77 @@
-import json, urllib.request, datetime
+import json, urllib.request, urllib.parse, datetime, re
 
 today = datetime.date.today().strftime('%Y-%m-%d')
 WEBHOOK = 'https://open.feishu.cn/open-apis/bot/v2/hook/a8d82c68-6dfa-4431-85fc-34ad85c19a70'
 
 
 def search(query):
-    url = 'https://s.jina.ai/' + query.replace(' ', '+')
+    """DuckDuckGo HTML search - no API key required"""
+    url = 'https://html.duckduckgo.com/html/?q=' + urllib.parse.quote(query)
     req = urllib.request.Request(url, headers={
-        'Accept': 'text/plain',
-        'X-Retain-Images': 'none',
-        'User-Agent': 'Mozilla/5.0'
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'Accept': 'text/html',
     })
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.read().decode('utf-8', errors='ignore')[:4000]
+        with urllib.request.urlopen(req, timeout=20) as r:
+            html = r.read().decode('utf-8', errors='ignore')
+        # Extract result snippets from DDG HTML
+        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.S)
+        titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html, re.S)
+        urls = re.findall(r'class="result__url"[^>]*>\s*(.*?)\s*</a>', html, re.S)
+        results = []
+        for i in range(min(5, len(snippets))):
+            title = re.sub(r'<[^>]+>', '', titles[i] if i < len(titles) else '').strip()
+            snip = re.sub(r'<[^>]+>', '', snippets[i]).strip()
+            url_text = urls[i].strip() if i < len(urls) else ''
+            if title and snip:
+                results.append(f'{title} — {snip[:100]} ({url_text})')
+        return results
     except Exception as e:
         print(f'search error: {e}')
-        return ''
+        return []
 
 
-def pts(text):
-    skip = ('http', '[', '#', '---', '===', 'Source', '!', '*')
-    lines = [l.strip() for l in text.split('\n')
-             if l.strip() and len(l.strip()) > 30
-             and not any(l.strip().startswith(s) for s in skip)]
-    return [l[:120] for l in lines[:3]] or ['本周暂无新动态']
-
-
-def rows(points):
-    return [[{'tag': 'text', 'text': '• ' + p}] for p in points]
+def fmt_section(title, points):
+    lines = [f'【{title}】']
+    for p in (points or ['本周暂无新动态']):
+        lines.append(f'• {p[:120]}')
+    return '\n'.join(lines)
 
 
 print('搜索主题1: OpenAI ChatGPT 广告平台动态...')
-r1 = search('ChatGPT ads platform update ecommerce 2026')
+p1 = search('ChatGPT ads platform update ecommerce 2026 site:digiday.com OR site:axios.com')
 
 print('搜索主题2: 亚马逊卖家实战案例...')
-r2 = search('Amazon sellers ChatGPT ads ROI case study 2026')
+p2 = search('Amazon sellers ChatGPT ads ROI results case study 2026')
 
 print('搜索主题3: Prime Day + OpenAI 广告...')
-r3 = search('Amazon Prime Day 2026 ChatGPT OpenAI ads strategy')
+p3 = search('Amazon Prime Day 2026 ChatGPT OpenAI ads strategy sellers')
 
-p1, p2, p3 = pts(r1), pts(r2), pts(r3)
-print('p1:', p1)
-print('p2:', p2)
-print('p3:', p3)
+print(f'找到: {len(p1)} / {len(p2)} / {len(p3)} 条')
 
-content = [
-    [{'tag': 'text', 'text': '① 平台动态', 'style': ['bold']}],
-    *rows(p1),
-    [{'tag': 'text', 'text': ''}],
-    [{'tag': 'text', 'text': '② 卖家实战', 'style': ['bold']}],
-    *rows(p2),
-    [{'tag': 'text', 'text': ''}],
-    [{'tag': 'text', 'text': '③ Prime Day / 大促信号', 'style': ['bold']}],
-    *rows(p3),
-    [{'tag': 'text', 'text': ''}],
-    [{'tag': 'text', 'text': '\U0001f511 本周关注重点：', 'style': ['bold']},
-     {'tag': 'text', 'text': p1[0] if p1[0] != '本周暂无新动态' else '本周暂无重要新动态'}],
-]
+summary = p1[0].split('—')[0].strip() if p1 else '本周暂无重要动态'
 
-payload = {
-    'msg_type': 'post',
-    'content': {'post': {'zh_cn': {
-        'title': f'\U0001f4ca OpenAI Ads 周报 · {today}',
-        'content': content
-    }}}
-}
+report = f"""📊 OpenAI Ads 周报 · {today}
+{'='*30}
 
+{fmt_section('① 平台动态', p1[:3])}
+
+{fmt_section('② 卖家实战', p2[:3])}
+
+{fmt_section('③ Prime Day / 大促信号', p3[:3])}
+
+🔑 本周关注重点：{summary}
+{'='*30}"""
+
+print('周报内容:')
+print(report)
+
+payload = {'msg_type': 'text', 'content': {'text': report}}
 data = json.dumps(payload, ensure_ascii=False).encode()
 req = urllib.request.Request(WEBHOOK, data=data,
                              headers={'Content-Type': 'application/json'})
 with urllib.request.urlopen(req) as r:
-    print('飞书推送结果:', r.read().decode())
+    result = r.read().decode()
+    print('飞书推送结果:', result)
 
 print('完成')
