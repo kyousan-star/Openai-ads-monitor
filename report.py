@@ -16,28 +16,38 @@ def search_news(query, max_results=4):
         results = []
         for item in root.findall('.//item')[:max_results]:
             title = item.findtext('title', '').strip()
-            link = item.findtext('link', '').strip()
+            # Clean HTML entities
+            title = re.sub(r'&[a-z]+;', '', title).strip()
             pub = item.findtext('pubDate', '')[:16]
-            desc = re.sub(r'<[^>]+>', '', item.findtext('description', '')).strip()[:80]
             if title:
-                results.append({'title': title, 'link': link, 'date': pub, 'desc': desc})
+                results.append({'title': title, 'date': pub})
         return results
     except Exception as e:
         print(f'search error [{query[:30]}]: {e}')
         return []
 
 
+def real_url(google_news_url):
+    """Follow Google News redirect to get actual article URL"""
+    try:
+        req = urllib.request.Request(google_news_url,
+                                     headers={'User-Agent': 'Mozilla/5.0'})
+        # Don't follow redirect - just get the Location header
+        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
+        with opener.open(req, timeout=5) as r:
+            return r.url
+    except Exception:
+        return ''
+
+
 def fmt_section(emoji_title, items):
-    lines = [f'{emoji_title}']
+    lines = [emoji_title]
     if not items:
         lines.append('• 本周暂无新动态')
     else:
         for it in items:
+            # Title already contains "- Source Name" at end
             lines.append(f'• {it["title"]}')
-            if it.get('desc'):
-                lines.append(f'  {it["desc"]}')
-            if it.get('link'):
-                lines.append(f'  🔗 {it["link"]}')
     return '\n'.join(lines)
 
 
