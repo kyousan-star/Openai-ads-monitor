@@ -1,71 +1,70 @@
-import json, urllib.request, urllib.parse, datetime, re, xml.etree.ElementTree as ET
+import json, urllib.request, urllib.parse, datetime, re, time
+import xml.etree.ElementTree as ET
 
 today = datetime.date.today().strftime('%Y-%m-%d')
 WEBHOOK = 'https://open.feishu.cn/open-apis/bot/v2/hook/a8d82c68-6dfa-4431-85fc-34ad85c19a70'
 
 
-def search_news(query, max_results=4):
-    """Google News RSS - free, no auth, reliable in CI"""
+def search_news(query, max_results=3):
     q = urllib.parse.quote(query)
     url = f'https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en'
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
-            xml_data = r.read()
-        root = ET.fromstring(xml_data)
+            root = ET.fromstring(r.read())
         results = []
         for item in root.findall('.//item')[:max_results]:
-            title = item.findtext('title', '').strip()
-            # Clean HTML entities
-            title = re.sub(r'&[a-z]+;', '', title).strip()
-            pub = item.findtext('pubDate', '')[:16]
-            if title:
-                results.append({'title': title, 'date': pub})
+            raw = re.sub(r'&[a-zA-Z]+;', '', item.findtext('title', '')).strip()
+            m = re.match(r'^(.+?)\s+-\s+([^-]+)$', raw)
+            en_title = m.group(1).strip() if m else raw
+            source = m.group(2).strip() if m else ''
+            if en_title:
+                results.append({'en_title': en_title, 'source': source})
         return results
     except Exception as e:
-        print(f'search error [{query[:30]}]: {e}')
+        print(f'search error: {e}')
         return []
 
 
-def real_url(google_news_url):
-    """Follow Google News redirect to get actual article URL"""
+def translate(text):
+    url = ('https://api.mymemory.translated.net/get?q='
+           + urllib.parse.quote(text) + '&langpair=en|zh')
     try:
-        req = urllib.request.Request(google_news_url,
-                                     headers={'User-Agent': 'Mozilla/5.0'})
-        # Don't follow redirect - just get the Location header
-        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
-        with opener.open(req, timeout=5) as r:
-            return r.url
-    except Exception:
-        return ''
+        with urllib.request.urlopen(url, timeout=10) as r:
+            data = json.loads(r.read())
+        t = data.get('responseData', {}).get('translatedText', '')
+        return t if t and t.upper() != text.upper() else text
+    except Exception as e:
+        print(f'translate error: {e}')
+        return text
 
 
-def fmt_section(emoji_title, items):
-    lines = [emoji_title]
+def fmt_section(title, items):
+    lines = [title]
     if not items:
         lines.append('• 本周暂无新动态')
     else:
         for it in items:
-            # Title already contains "- Source Name" at end
-            lines.append(f'• {it["title"]}')
+            src = f'（{it["source"]}）' if it['source'] else ''
+            lines.append(f'• {it["zh_title"]}{src}')
     return '\n'.join(lines)
 
 
-print('搜索主题1: OpenAI ChatGPT 广告平台动态...')
+print('搜索中...')
 r1 = search_news('ChatGPT ads platform OpenAI advertising ecommerce 2026')
+r2 = search_news('Amazon sellers ChatGPT ads ROI results 2026')
+r3 = search_news('Amazon Prime Day 2026 ChatGPT OpenAI advertising sellers')
+print(f'找到: {len(r1)}/{len(r2)}/{len(r3)} 条，翻译中...')
 
-print('搜索主题2: 亚马逊卖家实战...')
-r2 = search_news('Amazon sellers ChatGPT ads ROI advertising results 2026')
+for it in r1 + r2 + r3:
+    it['zh_title'] = translate(it['en_title'])
+    time.sleep(0.3)
 
-print('搜索主题3: Prime Day + OpenAI 广告...')
-r3 = search_news('Amazon Prime Day 2026 ChatGPT OpenAI advertising')
-
-print(f'找到: {len(r1)} / {len(r2)} / {len(r3)} 条')
-
-summary = r1[0]['title'] if r1 else (r2[0]['title'] if r2 else '本周暂无重要动态')
+top = (r1 + r2 + r3)
+summary = top[0]['zh_title'] if top else '本周暂无重要动态'
 
 report = f"""📊 OpenAI Ads 周报 · {today}
-{'='*32}
+{'='*30}
 
 {fmt_section('【① 平台动态】', r1)}
 
@@ -73,8 +72,8 @@ report = f"""📊 OpenAI Ads 周报 · {today}
 
 {fmt_section('【③ Prime Day / 大促信号】', r3)}
 
-🔑 本周关注重点：{summary[:100]}
-{'='*32}"""
+🔑 本周关注重点：{summary}
+{'='*30}"""
 
 print(report)
 
